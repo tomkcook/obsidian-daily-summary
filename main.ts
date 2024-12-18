@@ -227,7 +227,7 @@ export default class DailySummaryPlugin extends Plugin {
 			const sections = parseMarkdownSections(content).filter(
 				(section) => section.title == sectionTitle
 			);
-			sections.forEach((section) => outputSections.push({...section, title: file.name}));
+			sections.forEach((section) => outputSections.push({...section, title: file.name.replace(/\.md$/, "")}));
 		}
 
 		const content = await this.applyTemplate(outputSections);
