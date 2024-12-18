@@ -138,15 +138,17 @@ function parseMarkdownSections(markdown: string): SummarySection[] {
 	const sections: SummarySection[] = [];
 	const lines = markdown.split("\n");
 	let currentSection: SummarySection | null = null;
+	let currentlyInCodeSection = false;
 
 	for (let i = 0; i < lines.length; i++) {
 		const line = lines[i];
 		const headingMatch = line.match(/^(#+)\s+(.+)$/);
 
-		if (headingMatch) {
+		console.log(line);
+
+		if (! currentlyInCodeSection && headingMatch) {
 			const level = headingMatch[1].length;
 			const title = headingMatch[2].trim();
-			console.log(title);
 
 			if (currentSection) {
 				sections.push(currentSection);
@@ -157,6 +159,10 @@ function parseMarkdownSections(markdown: string): SummarySection[] {
 				title,
 				content: "",
 			};
+		} else if (line.startsWith("```")) {
+			if (currentSection)
+					currentSection.content += line + "\n";
+			currentlyInCodeSection = ! currentlyInCodeSection;
 		} else if (currentSection) {
 			currentSection.content += line + "\n";
 		}
