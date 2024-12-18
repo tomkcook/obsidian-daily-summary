@@ -1,134 +1,272 @@
-import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
+import {
+	App,
+	Editor,
+	EditorPosition,
+	EditorSuggest,
+	EditorSuggestContext,
+	EditorSuggestTriggerInfo,
+	MarkdownPostProcessorContext,
+	MarkdownRenderer,
+	MarkdownView,
+	Modal,
+	Notice,
+	Plugin,
+	PluginSettingTab,
+	PopoverSuggest,
+	Setting,
+	SuggestModal,
+	TFile,
+} from "obsidian";
 
-// Remember to rename these classes and interfaces!
-
-interface MyPluginSettings {
-	mySetting: string;
+interface DailySummarySettings {
+	template: TFile | null;
+	searchFolder: string | null;
+	searchTag: string | null;
 }
 
-const DEFAULT_SETTINGS: MyPluginSettings = {
-	mySetting: 'default'
+const DEFAULT_SETTINGS: DailySummarySettings = {
+	template: null,
+	searchFolder: "/",
+	searchTag: null,
+};
+
+interface SummarySection {
+	level: number;
+	title: string;
+	content: string;
 }
 
-export default class MyPlugin extends Plugin {
-	settings: MyPluginSettings;
+class DailySummarySettingTab extends PluginSettingTab {
+	plugin: DailySummaryPlugin;
+	suggest?: NotePathSuggest;
 
-	async onload() {
-		await this.loadSettings();
-
-		// This creates an icon in the left ribbon.
-		const ribbonIconEl = this.addRibbonIcon('dice', 'Sample Plugin', (evt: MouseEvent) => {
-			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
-		});
-		// Perform additional things with the ribbon
-		ribbonIconEl.addClass('my-plugin-ribbon-class');
-
-		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status Bar Text');
-
-		// This adds a simple command that can be triggered anywhere
-		this.addCommand({
-			id: 'open-sample-modal-simple',
-			name: 'Open sample modal (simple)',
-			callback: () => {
-				new SampleModal(this.app).open();
-			}
-		});
-		// This adds an editor command that can perform some operation on the current editor instance
-		this.addCommand({
-			id: 'sample-editor-command',
-			name: 'Sample editor command',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				console.log(editor.getSelection());
-				editor.replaceSelection('Sample Editor Command');
-			}
-		});
-		// This adds a complex command that can check whether the current state of the app allows execution of the command
-		this.addCommand({
-			id: 'open-sample-modal-complex',
-			name: 'Open sample modal (complex)',
-			checkCallback: (checking: boolean) => {
-				// Conditions to check
-				const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
-					// If checking is true, we're simply "checking" if the command can be run.
-					// If checking is false, then we want to actually perform the operation.
-					if (!checking) {
-						new SampleModal(this.app).open();
-					}
-
-					// This command will only show up in Command Palette when the check function returns true
-					return true;
-				}
-			}
-		});
-
-		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new SampleSettingTab(this.app, this));
-
-		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
-			console.log('click', evt);
-		});
-
-		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-		this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
-	}
-
-	onunload() {
-
-	}
-
-	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
-	}
-
-	async saveSettings() {
-		await this.saveData(this.settings);
-	}
-}
-
-class SampleModal extends Modal {
-	constructor(app: App) {
-		super(app);
-	}
-
-	onOpen() {
-		const {contentEl} = this;
-		contentEl.setText('Woah!');
-	}
-
-	onClose() {
-		const {contentEl} = this;
-		contentEl.empty();
-	}
-}
-
-class SampleSettingTab extends PluginSettingTab {
-	plugin: MyPlugin;
-
-	constructor(app: App, plugin: MyPlugin) {
+	constructor(app: App, plugin: DailySummaryPlugin) {
 		super(app, plugin);
 		this.plugin = plugin;
 	}
 
 	display(): void {
-		const {containerEl} = this;
+		const { containerEl } = this;
 
 		containerEl.empty();
 
 		new Setting(containerEl)
-			.setName('Setting #1')
-			.setDesc('It\'s a secret')
-			.addText(text => text
-				.setPlaceholder('Enter your secret')
-				.setValue(this.plugin.settings.mySetting)
-				.onChange(async (value) => {
-					this.plugin.settings.mySetting = value;
+			.setName("Template")
+			.setDesc("The template used to render summary sections")
+			.addDropdown((dropdown) => {
+				dropdown.addOption("", "");
+				for (const file of this.app.vault.getFiles()) {
+					dropdown.addOption(file.path, file.path.replace(/\.md$/, ""));
+				}
+				dropdown.setValue(this.plugin.settings.template?.path ?? "");
+				dropdown.onChange(async (value) => {
+					this.plugin.settings.template = this.app.vault.getFileByPath(value);
 					await this.plugin.saveSettings();
-				}));
+					this.display();
+				})
+			});
+
+		new Setting(containerEl)
+			.setName("Search Folders")
+			.setDesc("A folder to seach for matching summary sections")
+			.addText((text) => {
+				text
+					.setPlaceholder("Search folder")
+					.setValue(this.plugin.settings.searchFolder ?? "/")
+					.onChange(async (value) => {
+						this.plugin.settings.searchFolder = value;
+						await this.plugin.saveSettings();
+					});
+			});
+
+		new Setting(containerEl)
+			.setName("Search Tag")
+			.setDesc("A tag to search for matching summary sections")
+			.addText((text) => {
+				text
+					.setPlaceholder("Search tag")
+					.setValue(this.plugin.settings.searchTag ?? "")
+					.onChange(async (value) => {
+						this.plugin.settings.searchTag = value;
+						await this.plugin.saveSettings();
+					});
+			})
 	}
 }
+
+class NotePathSuggest extends EditorSuggest<TFile> {
+    constructor(app: App, inputEl: HTMLInputElement) {
+        super(app);
+		console.log("Constructed");
+        this.inputEl = inputEl;
+
+    }
+
+	onTrigger(cursor: EditorPosition, editor: Editor, file: TFile | null): EditorSuggestTriggerInfo | null {
+		console.log("onTritter");
+        if (this.inputEl !== this.inputEl.doc.activeElement) {
+            return null;
+        }
+
+        const currentInput = this.inputEl.value;
+        return {
+            start: { line: 0, ch: 0 }, // Doesn't matter for settings tab
+            end: { line: 0, ch: currentInput.length },
+            query: currentInput,
+        };
+	}
+
+    getSuggestions(ctx: EditorSuggestContext): TFile[] {
+		console.log("Getting suggestions");
+        const allFiles = this.app.vault.getMarkdownFiles();
+        return allFiles.filter(file => file.path.toLowerCase().startsWith(ctx.query.toLowerCase()));
+    }
+
+    renderSuggestion(file: TFile, el: HTMLElement) {
+        el.createEl('div', { text: file.path });
+    }
+
+	selectSuggestion(value: TFile, evt: MouseEvent | KeyboardEvent): void {
+        this.inputEl.value = value.path;
+        this.inputEl.dispatchEvent(new Event('input')); // Trigger onChange in settings tab
+	}
+
+    inputEl: HTMLInputElement;
+}
+
+function parseMarkdownSections(markdown: string): SummarySection[] {
+	const sections: SummarySection[] = [];
+	const lines = markdown.split("\n");
+	let currentSection: SummarySection | null = null;
+
+	for (let i = 0; i < lines.length; i++) {
+		const line = lines[i];
+		const headingMatch = line.match(/^(#+)\s+(.+)$/);
+
+		if (headingMatch) {
+			const level = headingMatch[1].length;
+			const title = headingMatch[2].trim();
+			console.log(title);
+
+			if (currentSection) {
+				sections.push(currentSection);
+			}
+
+			currentSection = {
+				level,
+				title,
+				content: "",
+			};
+		} else if (currentSection) {
+			currentSection.content += line + "\n";
+		}
+	}
+
+	if (currentSection) {
+		sections.push(currentSection);
+	}
+
+	//Post Processing to include subsections in parent sections.
+	for (let i = sections.length - 1; i >= 0; i--) {
+		const current = sections[i];
+		for (let j = i + 1; j < sections.length; j++) {
+			const next = sections[j];
+			if (next.level > current.level) {
+				current.content += `\n${next.title}\n${next.content}`;
+				sections.splice(j, 1);
+				j--;
+			} else {
+				break;
+			}
+		}
+	}
+
+	return sections;
+}
+
+export default class DailySummaryPlugin extends Plugin {
+	settings: DailySummarySettings;
+
+	async onload() {
+		console.log("Loading plugin");
+		await this.loadSettings();
+
+		this.addSettingTab(new DailySummarySettingTab(this.app, this));
+
+		this.registerMarkdownCodeBlockProcessor(
+			"daily-summary",
+			(source, el, ctx) => this.codeBlockProcessor(source, el, ctx)
+		);
+	}
+
+	async onunload() {}
+
+	async codeBlockProcessor(
+		source: string,
+		el: HTMLElement,
+		ctx: MarkdownPostProcessorContext
+	) {
+		const sectionTitle = source.trim();
+		const filesInPath = this.app.vault
+			.getMarkdownFiles()
+			.filter(
+				(file) =>
+					file.path.startsWith(this.settings.searchFolder ?? "")
+					&& file.path != ctx.sourcePath
+			);
+
+		const outputSections: SummarySection[] = [];
+		for (const file of filesInPath) {
+			const content = await this.app.vault.read(file);
+			const sections = parseMarkdownSections(content).filter(
+				(section) => section.title == sectionTitle
+			);
+			outputSections.push(...sections);
+		}
+
+		const content = await this.applyTemplate(outputSections);
+		await MarkdownRenderer.render(
+			this.app,
+			content.join("\n"),
+			el,
+			"",
+			this
+		);
+		/*
+		await MarkdownRenderer.render(
+			this.app,
+			this.app.vault.getFiles().map((file) => file.path).join("\n"),
+			el,
+			"",
+			this
+		)
+		*/
+	}
+
+	async applyTemplate(sections: SummarySection[]): Promise<string[]> {
+		if (this.settings.template) {
+			const templateText = await this.app.vault.read(this.settings.template);
+			if (! templateText) {
+				return ["Failed to load template"];
+			}
+
+			return sections.map((section) => templateText.replace("{{title}}", `${section.title}`).replace("{{content}}", section.content));
+		}
+		return sections.map((section) => section.content);
+	}
+
+	async loadSettings() {
+		let settings = Object.assign(
+			{},
+			DEFAULT_SETTINGS,
+			await this.loadData()
+		);
+		console.log(this.app.vault.getFileByPath(settings.template));
+		this.settings = {...settings, template: this.app.vault.getFileByPath(settings.template)}
+	}
+
+	async saveSettings() {
+		await this.saveData({...this.settings, template: this.settings.template?.path});
+	}
+}
+
