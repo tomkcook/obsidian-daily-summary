@@ -134,7 +134,7 @@ class NotePathSuggest extends EditorSuggest<TFile> {
     inputEl: HTMLInputElement;
 }
 
-function parseMarkdownSections(markdown: string, title: string): SummarySection[] {
+function parseMarkdownSections(markdown: string): SummarySection[] {
 	const sections: SummarySection[] = [];
 	const lines = markdown.split("\n");
 	let currentSection: SummarySection | null = null;
@@ -148,7 +148,7 @@ function parseMarkdownSections(markdown: string, title: string): SummarySection[
 
 		if (! currentlyInCodeSection && headingMatch) {
 			const level = headingMatch[1].length;
-			//const title = headingMatch[2].trim();
+			const title = headingMatch[2].trim();
 
 			if (currentSection) {
 				sections.push(currentSection);
@@ -224,10 +224,10 @@ export default class DailySummaryPlugin extends Plugin {
 		const outputSections: SummarySection[] = [];
 		for (const file of filesInPath) {
 			const content = await this.app.vault.read(file);
-			const sections = parseMarkdownSections(content, file.name).filter(
+			const sections = parseMarkdownSections(content).filter(
 				(section) => section.title == sectionTitle
 			);
-			outputSections.push(...sections);
+			sections.forEach((section) => outputSections.push({...section, title: file.name}));
 		}
 
 		const content = await this.applyTemplate(outputSections);
