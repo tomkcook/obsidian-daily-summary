@@ -19,7 +19,7 @@ import {
 } from "obsidian";
 
 interface DailySummarySettings {
-	template: TFile | null;
+	template: string | null;
 	searchFolder: string | null;
 	searchTag: string | null;
 }
@@ -58,9 +58,9 @@ class DailySummarySettingTab extends PluginSettingTab {
 				for (const file of this.app.vault.getFiles()) {
 					dropdown.addOption(file.path, file.path.replace(/\.md$/, ""));
 				}
-				dropdown.setValue(this.plugin.settings.template?.path ?? "");
+				dropdown.setValue(this.plugin.settings.template ?? "");
 				dropdown.onChange(async (value) => {
-					this.plugin.settings.template = this.app.vault.getFileByPath(value);
+					this.plugin.settings.template = value;
 					await this.plugin.saveSettings();
 					this.display();
 				})
@@ -97,13 +97,11 @@ class DailySummarySettingTab extends PluginSettingTab {
 class NotePathSuggest extends EditorSuggest<TFile> {
     constructor(app: App, inputEl: HTMLInputElement) {
         super(app);
-		console.log("Constructed");
         this.inputEl = inputEl;
 
     }
 
 	onTrigger(cursor: EditorPosition, editor: Editor, file: TFile | null): EditorSuggestTriggerInfo | null {
-		console.log("onTritter");
         if (this.inputEl !== this.inputEl.doc.activeElement) {
             return null;
         }
@@ -117,7 +115,6 @@ class NotePathSuggest extends EditorSuggest<TFile> {
 	}
 
     getSuggestions(ctx: EditorSuggestContext): TFile[] {
-		console.log("Getting suggestions");
         const allFiles = this.app.vault.getMarkdownFiles();
         return allFiles.filter(file => file.path.toLowerCase().startsWith(ctx.query.toLowerCase()));
     }
@@ -144,7 +141,6 @@ function parseMarkdownSections(markdown: string): SummarySection[] {
 		const line = lines[i];
 		const headingMatch = line.match(/^(#+)\s+(.+)$/);
 
-		console.log(line);
 
 		if (! currentlyInCodeSection && headingMatch) {
 			const level = headingMatch[1].length;
@@ -194,7 +190,7 @@ export default class DailySummaryPlugin extends Plugin {
 	settings: DailySummarySettings;
 
 	async onload() {
-		console.log("Loading plugin");
+		console.log("Loading settings");
 		await this.loadSettings();
 
 		this.addSettingTab(new DailySummarySettingTab(this.app, this));
@@ -251,7 +247,11 @@ export default class DailySummaryPlugin extends Plugin {
 
 	async applyTemplate(sections: SummarySection[]): Promise<string[]> {
 		if (this.settings.template) {
-			const templateText = await this.app.vault.read(this.settings.template);
+			const templateFile = this.app.vault.getFileByPath(this.settings.template);
+			if (!templateFile) {
+				return [`Template file ${this.settings.template} not found in vault`];
+			}
+			const templateText = await this.app.vault.read(templateFile);
 			if (! templateText) {
 				return ["Failed to load template"];
 			}
@@ -262,17 +262,15 @@ export default class DailySummaryPlugin extends Plugin {
 	}
 
 	async loadSettings() {
-		let settings = Object.assign(
+		this.settings = Object.assign(
 			{},
 			DEFAULT_SETTINGS,
 			await this.loadData()
 		);
-		console.log(this.app.vault.getFileByPath(settings.template));
-		this.settings = {...settings, template: this.app.vault.getFileByPath(settings.template)}
 	}
 
 	async saveSettings() {
-		await this.saveData({...this.settings, template: this.settings.template?.path});
+		await this.saveData(this.settings);
 	}
 }
 
